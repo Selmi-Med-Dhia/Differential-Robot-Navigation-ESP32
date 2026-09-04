@@ -35,7 +35,7 @@ ROS 2 ->| micro-ROS subscriptions      | queue  | 200 Hz navigation_control task
         +-----------------------------+ telem. +--------------------------------+
 ```
 
-The code under `include/diffnav/` and `src/core/` has no Arduino dependency. The exact same navigation logic is therefore compiled and exercised by the host simulation.
+The navigation core in `include/diffnav.hpp` and `src/diffnav.cpp` has no Arduino dependency. The exact same navigation logic is therefore compiled and exercised by the host simulation.
 
 ## Hardware defaults
 
@@ -94,8 +94,7 @@ Run:
 
 ```bash
 g++ -O2 -std=c++17 -Wall -Wextra -Wpedantic -Werror -Iinclude \
-  sim/sim_main.cpp src/core/odometry.cpp src/core/bezier.cpp src/core/navigator.cpp \
-  -o sim/sim
+  sim/sim_main.cpp src/diffnav.cpp -o sim/sim
 ./sim/sim
 ```
 
