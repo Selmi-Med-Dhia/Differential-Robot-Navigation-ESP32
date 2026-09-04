@@ -1,5 +1,4 @@
 .pio/
 .vscode/
 *.o
-sim/sim
 .DS_Store
