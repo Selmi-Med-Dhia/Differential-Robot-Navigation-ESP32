@@ -1,0 +1,18 @@
+#include <Arduino.h>
+#include <algorithm>
+#include <cmath>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+#include "diffnav.hpp"
+#include "encoder_pcnt.hpp"
+#include "motor_driver.hpp"
+#include "robot_config.hpp"
+#include "ros_bridge.hpp"
+namespace {
+EncoderPcnt enc;MotorDriver motors;diffnav::DifferentialOdometry odom(robot_config::odometryConfig());diffnav::Navigator nav(robot_config::navigatorConfig());diffnav::WheelSpeedController rc(robot_config::wheelControllerConfig()),lc(robot_config::wheelControllerConfig());QueueHandle_t cq=nullptr,tq=nullptr;RosBridgeContext rctx{};uint32_t rs=0,ls=0;
+void command(const diffnav::NavCommand&c){auto p=odom.state().pose;switch(c.type){case diffnav::NavCommandType::STOP:nav.stop();break;case diffnav::NavCommandType::EMERGENCY_STOP:nav.emergencyStop();break;case diffnav::NavCommandType::CLEAR_EMERGENCY:nav.clearEmergency();rc.reset();lc.reset();break;case diffnav::NavCommandType::VELOCITY:nav.commandVelocity(c.p0,c.p1);break;case diffnav::NavCommandType::GO_TO:nav.commandGoTo(p,c.p0,c.p1,c.p2,c.direction,c.use_final_heading,c.p3);break;case diffnav::NavCommandType::MOVE_DISTANCE:nav.commandMoveDistance(p,c.p0,c.p1);break;case diffnav::NavCommandType::ROTATE_RELATIVE:nav.commandRotateRelative(p,c.p0,c.p1);break;case diffnav::NavCommandType::ORIENT_ABSOLUTE:nav.commandOrientAbsolute(p,c.p0,c.p1);break;case diffnav::NavCommandType::SET_POSE:{diffnav::Pose2D n{c.p0,c.p1,c.p2,c.p2};odom.setPose(n);nav.stop();break;}case diffnav::NavCommandType::BEZIER:nav.commandBezier(p,{c.p0,c.p1},{c.p2,c.p3},{c.p4,c.p5},c.p6,c.direction);break;default:break;}}
+bool stall(float t,float m,float pwm,uint32_t dt,uint32_t&acc){bool bad=std::fabs(t)>=robot_config::kStallTargetThresholdMmS&&std::fabs(m)<=robot_config::kStallMeasuredThresholdMmS&&std::fabs(pwm)>=robot_config::kStallPwmThreshold;acc=bad?acc+dt:0;return acc>=robot_config::kStallTimeoutMs;}
+void control(void*){auto counts=enc.snapshot();odom.reset({},counts.right,counts.left);TickType_t wake=xTaskGetTickCount();uint32_t prev=micros(),div=0;uint8_t timing=0;for(;;){vTaskDelayUntil(&wake,pdMS_TO_TICKS(robot_config::kControlPeriodUs/1000));uint32_t now=micros(),us=now-prev;prev=now;float dt=us*1e-6f;if(us>30000){if(++timing>=5)nav.emergencyStop(diffnav::FaultCode::CONTROL_TIMING);}else timing=0;counts=enc.snapshot();odom.update(counts.right,counts.left,dt);diffnav::NavCommand c{};while(xQueueReceive(cq,&c,0)==pdTRUE)command(c);auto target=nav.update(odom.state(),dt);float rp=rc.update(target.right_mm_s,odom.state().wheel_speed.right_mm_s,dt),lp=lc.update(target.left_mm_s,odom.state().wheel_speed.left_mm_s,dt);uint32_t ms=std::max<uint32_t>(1,us/1000);bool sr=stall(target.right_mm_s,odom.state().wheel_speed.right_mm_s,rp,ms,rs),sl=stall(target.left_mm_s,odom.state().wheel_speed.left_mm_s,lp,ms,ls);if(sr||sl){nav.emergencyStop(sr?diffnav::FaultCode::STALL_RIGHT:diffnav::FaultCode::STALL_LEFT);rc.reset();lc.reset();rp=lp=0;}if(nav.mode()==diffnav::MotionMode::EMERGENCY_STOP||nav.mode()==diffnav::MotionMode::FAULT||nav.mode()==diffnav::MotionMode::IDLE){rp=lp=0;rc.reset();lc.reset();}motors.write(rp,lp);if(++div>=8){div=0;TelemetryFrame f{};f.odom=odom.state();f.motion=nav.status();f.target=target;f.right_pwm=rp;f.left_pwm=lp;xQueueOverwrite(tq,&f);}}}
+}
+void setup(){Serial.begin(115200);cq=xQueueCreate(8,sizeof(diffnav::NavCommand));tq=xQueueCreate(1,sizeof(TelemetryFrame));if(!cq||!tq||!motors.begin()||!enc.begin()){motors.stop();while(true)delay(1000);}rctx={cq,tq};xTaskCreatePinnedToCore(control,"navigation_control",6144,nullptr,4,nullptr,1);xTaskCreatePinnedToCore(rosBridgeTask,"micro_ros",8192,&rctx,1,nullptr,0);}void loop(){delay(1000);}

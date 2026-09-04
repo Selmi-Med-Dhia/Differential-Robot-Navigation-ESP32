@@ -1,0 +1,17 @@
+name: Navigation validation
+on: [push, pull_request]
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: g++ -O2 -std=c++17 -Wall -Wextra -Wpedantic -Werror -Iinclude sim/sim_main.cpp src/diffnav.cpp -o sim/sim
+      - run: ./sim/sim
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install platformio
+      - run: pio run -e esp32dev
