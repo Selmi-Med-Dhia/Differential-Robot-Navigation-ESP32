@@ -18,4 +18,5 @@ jobs:
           python -m venv "$HOME/.platformio/penv"
           "$HOME/.platformio/penv/bin/pip" install platformio
       - name: Build ESP32 firmware
-        run: "$HOME/.platformio/penv/bin/pio" run -e esp32dev
+        run: |
+          "$HOME/.platformio/penv/bin/pio" run -e esp32dev
