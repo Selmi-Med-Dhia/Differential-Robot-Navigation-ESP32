@@ -47,6 +47,23 @@ The code deliberately follows the vocabulary used in the supplied STM32/PAMI nav
 
 The command structure also uses named values (`x_mm`, `y_mm`, `phi_rad`, `distance_mm`, `speed_mm_s`) instead of opaque `p0/p1/p2` fields.
 
+## Driven-wheel / encoder-wheel speed convention
+
+This project intentionally keeps the same assumption as the supplied STM32 navigation code.
+
+The encoders are on the outer/dead wheels. During a turn, the physical linear speed of an outer encoder wheel is not exactly the same as the linear speed of the corresponding driven wheel because the two wheels are at different distances from the robot rotation center.
+
+A more geometric model could use robot angular velocity and the two different wheel spacings to convert driven-wheel velocity into encoder-wheel velocity. **This project intentionally does not do that conversion.**
+
+The targets are used 1:1:
+
+```text
+target_encoder_speed_R = driven_wheel_speed_R
+target_encoder_speed_L = driven_wheel_speed_L
+```
+
+The wheel PID therefore compares the driven-wheel target speed directly with the measured outer/dead-wheel encoder speed, exactly like `set_target_speeds()` in the STM32 implementation. Do not add an angular-velocity compensation term between these two values unless the control strategy is intentionally being changed.
+
 ## Architecture
 
 ```text
@@ -69,6 +86,7 @@ Communication never owns the motor-control loop. A disconnected ROS agent or a s
 - monotonic software-extended encoder count on the legacy ESP32 PCNT driver;
 - exact circular-arc differential-drive odometry;
 - independent right/left wheel speed controllers;
+- driven-wheel targets used directly as encoder-wheel PID targets, matching the STM32 convention;
 - static + velocity feed-forward;
 - PI(D), filtered derivative, anti-windup, and PWM slew limiting;
 - distance-domain ramping and braking;
