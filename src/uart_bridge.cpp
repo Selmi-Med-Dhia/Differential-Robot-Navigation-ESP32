@@ -1,7 +1,5 @@
 #include "communication.hpp"
 
-#if defined(COMMUNICATION_UART)
-
 #include <cstdlib>
 #include <cstring>
 
@@ -13,8 +11,8 @@ HardwareSerial navigation_uart(2);
 QueueHandle_t command_queue = nullptr;
 QueueHandle_t telemetry_queue = nullptr;
 
-constexpr size_t kCommandBufferSize = 160;
-char command_buffer[kCommandBufferSize] = {};
+constexpr size_t command_buffer_size = 160;
+char command_buffer[command_buffer_size] = {};
 size_t command_length = 0;
 
 void enqueueCommand(const diffnav::NavCommand& command) {
@@ -66,6 +64,8 @@ void writeError(const char* message) {
 }
 
 void handleCommand(char* line) {
+    // Commands are deliberately simple ASCII so they can be sent from another MCU,
+    // a Raspberry Pi, or a serial terminal without a special library.
     char* save = nullptr;
     const char* name = strtok_r(line, " ,\t", &save);
 
@@ -102,9 +102,9 @@ void handleCommand(char* line) {
     }
 
     if (strcmp(name, "VEL") == 0) {
-        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.p0) ||
-            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.p1)) {
-            writeError("VEL expects: VEL linear_mm_s angular_rad_s");
+        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.speed_mm_s) ||
+            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.angular_speed_rad_s)) {
+            writeError("VEL expects: VEL speed_mm_s angular_speed_rad_s");
             return;
         }
 
@@ -115,13 +115,13 @@ void handleCommand(char* line) {
     }
 
     if (strcmp(name, "MOVE") == 0) {
-        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.p0)) {
-            writeError("MOVE expects: MOVE distance_mm [speed_mm_s]");
+        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.distance_mm)) {
+            writeError("MOVE expects: MOVE distance_mm [cruise_speed_mm_s]");
             return;
         }
 
         const char* speed_text = strtok_r(nullptr, " ,\t", &save);
-        if (speed_text != nullptr && !parseFloat(speed_text, command.p1)) {
+        if (speed_text != nullptr && !parseFloat(speed_text, command.speed_mm_s)) {
             writeError("invalid MOVE speed");
             return;
         }
@@ -133,13 +133,13 @@ void handleCommand(char* line) {
     }
 
     if (strcmp(name, "ROTATE") == 0) {
-        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.p0)) {
-            writeError("ROTATE expects: ROTATE angle_rad [wheel_speed_mm_s]");
+        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.phi_rad)) {
+            writeError("ROTATE expects: ROTATE angle_rad [rotating_speed_mm_s]");
             return;
         }
 
         const char* speed_text = strtok_r(nullptr, " ,\t", &save);
-        if (speed_text != nullptr && !parseFloat(speed_text, command.p1)) {
+        if (speed_text != nullptr && !parseFloat(speed_text, command.speed_mm_s)) {
             writeError("invalid ROTATE speed");
             return;
         }
@@ -151,13 +151,13 @@ void handleCommand(char* line) {
     }
 
     if (strcmp(name, "ORIENT") == 0) {
-        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.p0)) {
-            writeError("ORIENT expects: ORIENT angle_rad [wheel_speed_mm_s]");
+        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.phi_rad)) {
+            writeError("ORIENT expects: ORIENT phi_rad [rotating_speed_mm_s]");
             return;
         }
 
         const char* speed_text = strtok_r(nullptr, " ,\t", &save);
-        if (speed_text != nullptr && !parseFloat(speed_text, command.p1)) {
+        if (speed_text != nullptr && !parseFloat(speed_text, command.speed_mm_s)) {
             writeError("invalid ORIENT speed");
             return;
         }
@@ -169,10 +169,10 @@ void handleCommand(char* line) {
     }
 
     if (strcmp(name, "POSE") == 0) {
-        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.p0) ||
-            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.p1) ||
-            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.p2)) {
-            writeError("POSE expects: POSE x_mm y_mm theta_rad");
+        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.x_mm) ||
+            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.y_mm) ||
+            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.phi_rad)) {
+            writeError("POSE expects: POSE x_mm y_mm phi_rad");
             return;
         }
 
@@ -185,23 +185,23 @@ void handleCommand(char* line) {
     if (strcmp(name, "GOTO") == 0) {
         int direction = 1;
 
-        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.p0) ||
-            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.p1) ||
-            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.p2) ||
+        if (!parseFloat(strtok_r(nullptr, " ,\t", &save), command.x_mm) ||
+            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.y_mm) ||
+            !parseFloat(strtok_r(nullptr, " ,\t", &save), command.speed_mm_s) ||
             !parseInt(strtok_r(nullptr, " ,\t", &save), direction)) {
-            writeError("GOTO expects: GOTO x_mm y_mm speed_mm_s direction [final_heading_rad]");
+            writeError("GOTO expects: GOTO x_mm y_mm speed_mm_s direction [final_phi_rad]");
             return;
         }
 
         command.direction = direction >= 0 ? 1 : -1;
 
-        const char* final_heading_text = strtok_r(nullptr, " ,\t", &save);
-        if (final_heading_text != nullptr) {
-            if (!parseFloat(final_heading_text, command.p3)) {
-                writeError("invalid GOTO final heading");
+        const char* final_phi_text = strtok_r(nullptr, " ,\t", &save);
+        if (final_phi_text != nullptr) {
+            if (!parseFloat(final_phi_text, command.phi_rad)) {
+                writeError("invalid GOTO final phi");
                 return;
             }
-            command.use_final_heading = true;
+            command.use_final_phi = true;
         }
 
         command.type = diffnav::NavCommandType::GO_TO;
@@ -228,7 +228,7 @@ void readIncomingBytes() {
             continue;
         }
 
-        if (command_length + 1 < kCommandBufferSize) {
+        if (command_length + 1 < command_buffer_size) {
             command_buffer[command_length++] = byte;
         } else {
             command_length = 0;
@@ -243,11 +243,11 @@ void writeTelemetry(const TelemetryFrame& frame) {
     navigation_uart.print(',');
     navigation_uart.print(frame.odometry.pose.y_mm, 3);
     navigation_uart.print(',');
-    navigation_uart.print(frame.odometry.pose.theta_rad, 6);
+    navigation_uart.print(frame.odometry.pose.phi_rad, 6);
     navigation_uart.print(',');
-    navigation_uart.print(frame.odometry.body_velocity.linear_mm_s, 3);
+    navigation_uart.print(frame.odometry.robot_speed.speed_mm_s, 3);
     navigation_uart.print(',');
-    navigation_uart.print(frame.odometry.body_velocity.angular_rad_s, 6);
+    navigation_uart.print(frame.odometry.robot_speed.angular_speed_rad_s, 6);
     navigation_uart.print(',');
     navigation_uart.print(static_cast<int>(frame.motion.mode));
     navigation_uart.print(',');
@@ -255,22 +255,22 @@ void writeTelemetry(const TelemetryFrame& frame) {
     navigation_uart.print(',');
     navigation_uart.print(static_cast<int>(frame.motion.fault));
     navigation_uart.print(',');
-    navigation_uart.print(frame.right_pwm, 1);
+    navigation_uart.print(frame.pwm_R, 1);
     navigation_uart.print(',');
-    navigation_uart.println(frame.left_pwm, 1);
+    navigation_uart.println(frame.pwm_L, 1);
 }
 
 }  // namespace
 
-void communicationTask(void* argument) {
+void uartCommunicationTask(void* argument) {
     const auto context = *static_cast<CommunicationContext*>(argument);
     command_queue = context.command_queue;
     telemetry_queue = context.telemetry_queue;
 
-    navigation_uart.begin(robot_config::kUartBaudRate,
+    navigation_uart.begin(robot_config::uart_baud_rate,
                           SERIAL_8N1,
-                          robot_config::kUartRxPin,
-                          robot_config::kUartTxPin);
+                          robot_config::uart_rx_pin,
+                          robot_config::uart_tx_pin);
 
     navigation_uart.println("READY,DIFFNAV_UART_V1");
 
@@ -285,7 +285,7 @@ void communicationTask(void* argument) {
         }
 
         const uint32_t now_ms = millis();
-        if (now_ms - last_telemetry_ms >= robot_config::kUartTelemetryPeriodMs) {
+        if (now_ms - last_telemetry_ms >= robot_config::uart_telemetry_period_ms) {
             last_telemetry_ms = now_ms;
             writeTelemetry(latest_telemetry);
         }
@@ -293,5 +293,3 @@ void communicationTask(void* argument) {
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
-
-#endif

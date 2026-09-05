@@ -1,7 +1,5 @@
 #include "communication.hpp"
 
-#if defined(COMMUNICATION_MICROROS)
-
 #include <geometry_msgs/msg/pose2_d.h>
 #include <geometry_msgs/msg/twist.h>
 #include <micro_ros_platformio.h>
@@ -50,7 +48,8 @@ void enqueueCommand(const diffnav::NavCommand& command) {
         return;
     }
 
-    // Keep the newest command if the queue is full.
+    // If commands arrive faster than the control task can consume them, discard the oldest
+    // command and keep the newest one.
     diffnav::NavCommand discarded;
     xQueueReceive(command_queue, &discarded, 0);
     xQueueSend(command_queue, &command, 0);
@@ -61,8 +60,8 @@ void velocityCallback(const void* message) {
 
     diffnav::NavCommand command;
     command.type = diffnav::NavCommandType::VELOCITY;
-    command.p0 = static_cast<float>(twist->linear.x * 1000.0);  // m/s -> mm/s
-    command.p1 = static_cast<float>(twist->angular.z);
+    command.speed_mm_s = static_cast<float>(twist->linear.x * 1000.0);  // m/s -> mm/s
+    command.angular_speed_rad_s = static_cast<float>(twist->angular.z);
     enqueueCommand(command);
 }
 
@@ -71,12 +70,12 @@ void goalCallback(const void* message) {
 
     diffnav::NavCommand command;
     command.type = diffnav::NavCommandType::GO_TO;
-    command.p0 = static_cast<float>(goal->x * 1000.0);  // m -> mm
-    command.p1 = static_cast<float>(goal->y * 1000.0);  // m -> mm
-    command.p2 = 0.0f;                                  // use default navigation speed
-    command.p3 = static_cast<float>(goal->theta);
+    command.x_mm = static_cast<float>(goal->x * 1000.0);  // m -> mm
+    command.y_mm = static_cast<float>(goal->y * 1000.0);  // m -> mm
+    command.speed_mm_s = 0.0f;                            // use default cruise speed
+    command.phi_rad = static_cast<float>(goal->theta);
     command.direction = 1;
-    command.use_final_heading = true;
+    command.use_final_phi = true;
     enqueueCommand(command);
 }
 
@@ -195,19 +194,13 @@ bool createEntities() {
                                        &velocity_subscription,
                                        &velocity_message,
                                        velocityCallback,
-                                       ON_NEW_DATA) != RCL_RET_OK) {
-        return false;
-    }
-
-    if (rclc_executor_add_subscription(&executor,
+                                       ON_NEW_DATA) != RCL_RET_OK ||
+        rclc_executor_add_subscription(&executor,
                                        &goal_subscription,
                                        &goal_message,
                                        goalCallback,
-                                       ON_NEW_DATA) != RCL_RET_OK) {
-        return false;
-    }
-
-    if (rclc_executor_add_subscription(&executor,
+                                       ON_NEW_DATA) != RCL_RET_OK ||
+        rclc_executor_add_subscription(&executor,
                                        &emergency_stop_subscription,
                                        &emergency_stop_message,
                                        emergencyStopCallback,
@@ -222,13 +215,13 @@ bool createEntities() {
 void publishPose(const TelemetryFrame& frame) {
     pose_message.x = frame.odometry.pose.x_mm / 1000.0;
     pose_message.y = frame.odometry.pose.y_mm / 1000.0;
-    pose_message.theta = frame.odometry.pose.theta_rad;
+    pose_message.theta = frame.odometry.pose.phi_rad;
     (void)rcl_publish(&pose_publisher, &pose_message, nullptr);
 }
 
 }  // namespace
 
-void communicationTask(void* argument) {
+void microRosCommunicationTask(void* argument) {
     const auto context = *static_cast<CommunicationContext*>(argument);
     command_queue = context.command_queue;
     telemetry_queue = context.telemetry_queue;
@@ -245,13 +238,11 @@ void communicationTask(void* argument) {
         const uint32_t now_ms = millis();
 
         if (!communication_ready) {
-            if (now_ms - last_connection_attempt_ms >= robot_config::kRosAgentPingPeriodMs) {
+            if (now_ms - last_connection_attempt_ms >= robot_config::ros_agent_ping_period_ms) {
                 last_connection_attempt_ms = now_ms;
 
-                if (rmw_uros_ping_agent(50, 1) == RMW_RET_OK) {
-                    if (!createEntities()) {
-                        destroyEntities();
-                    }
+                if (rmw_uros_ping_agent(50, 1) == RMW_RET_OK && !createEntities()) {
+                    destroyEntities();
                 }
             }
 
@@ -260,7 +251,7 @@ void communicationTask(void* argument) {
         }
 
         if (rclc_executor_spin_some(&executor,
-                                    RCL_MS_TO_NS(robot_config::kRosSpinPeriodMs)) != RCL_RET_OK) {
+                                    RCL_MS_TO_NS(robot_config::ros_spin_period_ms)) != RCL_RET_OK) {
             destroyEntities();
             continue;
         }
@@ -269,12 +260,12 @@ void communicationTask(void* argument) {
                xQueueReceive(telemetry_queue, &latest_telemetry, 0) == pdTRUE) {
         }
 
-        if (now_ms - last_publish_ms >= robot_config::kTelemetryPeriodMs) {
+        if (now_ms - last_publish_ms >= robot_config::telemetry_period_ms) {
             last_publish_ms = now_ms;
             publishPose(latest_telemetry);
         }
 
-        if (now_ms - last_agent_ping_ms >= robot_config::kRosAgentPingPeriodMs) {
+        if (now_ms - last_agent_ping_ms >= robot_config::ros_agent_ping_period_ms) {
             last_agent_ping_ms = now_ms;
             if (rmw_uros_ping_agent(25, 1) != RMW_RET_OK) {
                 destroyEntities();
@@ -285,5 +276,3 @@ void communicationTask(void* argument) {
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 }
-
-#endif

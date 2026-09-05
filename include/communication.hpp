@@ -6,24 +6,23 @@
 
 #include "diffnav.hpp"
 
-#if defined(COMMUNICATION_MICROROS) && defined(COMMUNICATION_UART)
-#error "Select only one communication backend"
-#elif !defined(COMMUNICATION_MICROROS) && !defined(COMMUNICATION_UART)
-#error "Select COMMUNICATION_MICROROS or COMMUNICATION_UART in platformio.ini"
-#endif
-
+// Information produced by the control task and consumed by either communication backend.
 struct TelemetryFrame {
     diffnav::OdometryState odometry{};
     diffnav::MotionStatus motion{};
     diffnav::WheelSpeeds target_wheel_speed{};
-    float right_pwm = 0.0f;
-    float left_pwm = 0.0f;
+    float pwm_R = 0.0f;
+    float pwm_L = 0.0f;
 };
 
+// Both communication tasks receive the same queues. This keeps communication completely
+// separate from the 200 Hz navigation/control loop.
 struct CommunicationContext {
     QueueHandle_t command_queue = nullptr;
     QueueHandle_t telemetry_queue = nullptr;
 };
 
-// Exactly one backend implements this function at compile time.
-void communicationTask(void* argument);
+// Both backends are always available in the firmware. setup() chooses one at runtime from
+// robot_config::communication_type.
+void microRosCommunicationTask(void* argument);
+void uartCommunicationTask(void* argument);

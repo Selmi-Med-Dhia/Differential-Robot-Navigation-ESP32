@@ -1,75 +1,90 @@
 # Differential Robot Navigation — ESP32
 
-A compact differential-drive navigation stack for the classic ESP32. It keeps PCNT encoder counting, exact differential-drive odometry, wheel-speed feedback, straight-line correction, go-to positioning, rotations, emergency stop, and stall detection.
+Differential-drive navigation for ESP32 using PCNT encoders, exact odometry, wheel-speed feedback, distance-based acceleration/braking, lane correction, go-to positioning, rotations, emergency stop, and stall detection.
 
-Bézier trajectories and the host simulation code have intentionally been removed to keep the project focused and easier to maintain.
+Bézier navigation and the old host simulation code are intentionally not part of this project.
 
-## Choose the communication mode
+## Communication selection
 
-There are two PlatformIO environments. Select the one you want before building or uploading:
+There is now **one PlatformIO build**. Communication is selected in code, in `include/robot_config.hpp`:
 
-- **`esp32dev_microros`** — communicates with ROS 2 through micro-ROS.
-- **`esp32dev_uart`** — communicates through a simple line-based UART protocol on `Serial2`.
+```cpp
+enum class CommunicationType : uint8_t {
+    MICRO_ROS,
+    UART,
+};
 
-The selected backend only translates external messages into `NavCommand` objects and reads telemetry. The navigation/control task is identical in both builds.
-
-### PlatformIO CLI
-
-micro-ROS:
-
-```bash
-pio run -e esp32dev_microros
-pio run -e esp32dev_microros -t upload
+constexpr CommunicationType communication_type = CommunicationType::MICRO_ROS;
 ```
 
-UART:
+To use UART, change only the last line to:
 
-```bash
-pio run -e esp32dev_uart
-pio run -e esp32dev_uart -t upload
+```cpp
+constexpr CommunicationType communication_type = CommunicationType::UART;
 ```
 
-In the PlatformIO IDE you can select the corresponding environment from the project environments list before Build or Upload.
+Then build/upload normally:
+
+```bash
+pio run
+pio run -t upload
+```
+
+Both communication backends are compiled in the same project. `setup()` starts only the task selected by `communication_type`, while the navigation/control task is identical in both cases.
+
+## Naming
+
+The code deliberately follows the vocabulary used in the supplied STM32/PAMI navigation code where practical:
+
+- `wheel_spacing_mm`, not `track_width`;
+- `wheel_diameter_R_mm` / `wheel_diameter_L_mm`;
+- `encoder_count_R` / `encoder_count_L`;
+- `speed_R_mm_s` / `speed_L_mm_s`;
+- `phi_rad` and `absolute_phi_rad`;
+- `ramping_acceleration`, `breaking_acceleration`, `rotating_speed`;
+- `lane_error` and lane correction terminology;
+- navigation methods such as `moveForward`, `rotate`, `orientate`, and `goTo`.
+
+The command structure also uses named values (`x_mm`, `y_mm`, `phi_rad`, `distance_mm`, `speed_mm_s`) instead of opaque `p0/p1/p2` fields.
 
 ## Architecture
 
 ```text
                        core 0                         core 1
               +--------------------+        +------------------------+
-External ---> | selected backend   | queue  | navigation_control     |
+External ---> | communication task | queue  | navigation_control     |
 interface     | micro-ROS OR UART  |------->| PCNT encoder snapshot  |
-              |                    |        | odometry               |
+              | selected in code   |        | odometry               |
               | telemetry output   |<-------| navigation             |
-              +--------------------+        | wheel controllers      |
+              +--------------------+        | wheel speed PID        |
                                             | motor PWM              |
                                             +------------------------+
 ```
 
-Communication never owns the motor-control loop. A slow or disconnected host therefore cannot block encoder sampling or motor control.
+Communication never owns the motor-control loop. A disconnected ROS agent or a slow UART peer therefore cannot block encoder sampling or motor control.
 
 ## Navigation features
 
 - full x4 quadrature decoding with ESP32 PCNT;
-- exact SE(2) differential-drive odometry;
+- monotonic software-extended encoder count on the legacy ESP32 PCNT driver;
+- exact circular-arc differential-drive odometry;
 - independent right/left wheel speed controllers;
-- static and velocity feed-forward;
+- static + velocity feed-forward;
 - PI(D), filtered derivative, anti-windup, and PWM slew limiting;
-- distance-based acceleration and braking;
-- straight-line heading correction;
-- Stanley-style cross-track correction;
-- precise endpoint capture;
-- forward and reverse movement;
+- distance-domain ramping and braking;
+- straight movement with phi correction and lane correction;
+- precise final-point capture;
+- forward and backwards movement;
 - relative rotation;
 - absolute orientation;
-- go-to position with optional final orientation;
-- velocity mode;
-- emergency stop;
-- wheel stall detection;
+- go-to position with optional final phi;
+- direct velocity mode;
+- emergency break and wheel stall detection;
 - 200 Hz control task pinned to ESP32 core 1.
 
 ## Hardware defaults
 
-The defaults are in `include/robot_config.hpp`.
+All values are in `include/robot_config.hpp`.
 
 | Parameter | Default |
 |---|---:|
@@ -82,44 +97,42 @@ The defaults are in `include/robot_config.hpp`.
 | Left encoder A/B | GPIO 16 / 4 |
 | Right wheel diameter | 34.73184056 mm |
 | Left wheel diameter | 34.69274232 mm |
-| Track width | 110.37343379 mm |
+| Wheel spacing | 110.37343379 mm |
 | Encoder CPR | 2800 counts/rev, x4 assumption |
 | UART RX | GPIO 25 |
 | UART TX | GPIO 26 |
 | UART baud | 115200 |
 
-Confirm the encoder CPR and signs on the physical robot before driving it.
+Confirm encoder directions, CPR, wheel diameters, and wheel spacing on the physical robot before relying on position accuracy.
 
-## micro-ROS mode
+## micro-ROS
 
-The micro-ROS environment uses serial transport through the ESP32 `Serial` port.
-
-Topics:
+micro-ROS uses serial transport through ESP32 `Serial`.
 
 | Topic | Type | Direction | Meaning |
 |---|---|---|---|
 | `/cmd_vel` | `geometry_msgs/Twist` | subscribe | linear x in m/s, angular z in rad/s |
-| `/nav/goal` | `geometry_msgs/Pose2D` | subscribe | x/y in metres, theta in radians |
-| `/nav/emergency_stop` | `std_msgs/Bool` | subscribe | true = emergency stop, false = clear |
-| `/robot_pose_raw` | `geometry_msgs/Pose2D` | publish | odometry pose in metres/radians |
+| `/nav/goal` | `geometry_msgs/Pose2D` | subscribe | x/y in metres, theta mapped to robot phi |
+| `/nav/emergency_stop` | `std_msgs/Bool` | subscribe | true = emergency break, false = clear |
+| `/robot_pose_raw` | `geometry_msgs/Pose2D` | publish | x/y in metres and robot phi |
 
-## UART mode
+## UART
 
-UART mode uses `Serial2`. Defaults are RX GPIO 25, TX GPIO 26, 115200 baud. Change them in `include/robot_config.hpp` if necessary.
+UART uses `Serial2` with RX GPIO 25, TX GPIO 26 and 115200 baud by default.
 
-Commands are ASCII lines terminated by `\n`. Spaces and commas are both accepted as separators.
+Commands are ASCII lines terminated by `\n`. Spaces and commas are accepted as separators.
 
 ```text
 PING
 STOP
 ESTOP
 CLEAR
-VEL linear_mm_s angular_rad_s
-MOVE distance_mm [speed_mm_s]
-ROTATE angle_rad [wheel_speed_mm_s]
-ORIENT angle_rad [wheel_speed_mm_s]
-POSE x_mm y_mm theta_rad
-GOTO x_mm y_mm speed_mm_s direction [final_heading_rad]
+VEL speed_mm_s angular_speed_rad_s
+MOVE distance_mm [cruise_speed_mm_s]
+ROTATE angle_rad [rotating_speed_mm_s]
+ORIENT phi_rad [rotating_speed_mm_s]
+POSE x_mm y_mm phi_rad
+GOTO x_mm y_mm speed_mm_s direction [final_phi_rad]
 ```
 
 Examples:
@@ -133,57 +146,37 @@ VEL 200 0.5
 STOP
 ```
 
-The ESP32 answers accepted commands with:
+Accepted commands return `OK`; malformed commands return `ERR,<reason>`. UART telemetry is:
 
 ```text
-OK
+TEL,x_mm,y_mm,phi_rad,speed_mm_s,angular_speed_rad_s,mode,result,fault,pwm_R,pwm_L
 ```
-
-Errors look like:
-
-```text
-ERR,unknown command
-```
-
-On startup UART mode sends:
-
-```text
-READY,DIFFNAV_UART_V1
-```
-
-It also sends periodic telemetry:
-
-```text
-TEL,x_mm,y_mm,theta_rad,linear_mm_s,angular_rad_s,mode,result,fault,right_pwm,left_pwm
-```
-
-`mode`, `result`, and `fault` are the numeric values of the enums in `include/diffnav.hpp`.
 
 ## Calibration order
 
-1. Verify both encoder signs by pushing the robot forward by hand.
-2. Rotate each wheel one exact revolution and confirm x4 CPR.
-3. Calibrate the two wheel diameters over a long measured straight distance.
-4. Calibrate effective track width with several full rotations.
-5. Characterize each motor's PWM dead zone/feed-forward.
-6. Tune wheel PI gains.
-7. Tune heading and cross-track gains only after odometry and wheel speed are trustworthy.
+1. Push the robot forward by hand and confirm both `encoder_count_R` and `encoder_count_L` increase.
+2. Rotate each wheel exactly one revolution and verify `encoder_counts_per_revolution`.
+3. Calibrate `wheel_diameter_R_mm` and `wheel_diameter_L_mm` over a long straight distance.
+4. Calibrate `wheel_spacing_mm` using several complete rotations.
+5. Characterize motor dead-zone/feed-forward.
+6. Tune wheel speed PI gains.
+7. Tune phi correction and lane correction only after odometry and wheel-speed control are trustworthy.
 
 ## Source layout
 
 ```text
 include/
-  communication.hpp   shared communication interface and telemetry
-  diffnav.hpp         navigation, odometry, controller types
-  encoder_pcnt.hpp    encoder driver interface
-  motor_driver.hpp    motor driver interface
-  robot_config.hpp    pins, calibration, timing, UART settings
+  communication.hpp   shared queues/telemetry and both communication task declarations
+  diffnav.hpp         navigation, odometry, speed control types
+  encoder_pcnt.hpp    ESP32 PCNT encoder interface
+  motor_driver.hpp    motor PWM/direction interface
+  robot_config.hpp    communication selector, pins, calibration and gains
 
 src/
-  diffnav.cpp             odometry and navigation implementation
-  encoder_pcnt.cpp        full-quadrature PCNT implementation
-  main.cpp                queues and deterministic control task
+  diffnav.cpp             odometry and navigation logic
+  encoder_pcnt.cpp        full x4 PCNT implementation
+  main.cpp                command dispatcher and deterministic control task
   micro_ros_bridge.cpp    micro-ROS backend
-  uart_bridge.cpp         raw UART backend
-  motor_driver.cpp        PWM/direction output
+  uart_bridge.cpp         UART backend
+  motor_driver.cpp        motor output
 ```
