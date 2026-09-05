@@ -156,7 +156,7 @@ void navigationControlTask(void*) {
             bad_timing_cycles = 0;
         }
 
-        // 1) Read hardware encoder counts and update pose + measured wheel speeds.
+        // 1) Read the outer/dead encoder wheels and update pose + measured wheel speeds.
         encoder_counts = encoders.snapshot();
         odometry.update(encoder_counts.encoder_count_R,
                         encoder_counts.encoder_count_L,
@@ -168,27 +168,44 @@ void navigationControlTask(void*) {
             processCommand(command);
         }
 
-        // 3) Navigation converts the current robot state into desired right/left wheel speeds.
-        const diffnav::WheelSpeeds target_speed = navigator.update(odometry.state(), dt_s);
+        // 3) Navigation produces the requested RIGHT and LEFT DRIVEN-wheel speeds.
+        const diffnav::WheelSpeeds driven_wheel_speed = navigator.update(odometry.state(), dt_s);
 
-        // 4) Independent wheel speed controllers convert desired speed into motor PWM.
+        // IMPORTANT: keep the same convention as the supplied STM32 navigation code.
+        //
+        // The encoders are on the outer/dead wheels, so during a turn their physical linear
+        // speed is not exactly the same as the driven wheels' linear speed. A textbook model
+        // could compensate for that difference using angular velocity and the two wheel
+        // spacings. We intentionally DO NOT do that here.
+        //
+        // The driven-wheel speed target is copied directly to the encoder-wheel speed target:
+        //
+        //     target_encoder_speed_R = driven_wheel_speed_R
+        //     target_encoder_speed_L = driven_wheel_speed_L
+        //
+        // This is exactly the assumption used by set_target_speeds() in the STM32 code.
+        const diffnav::WheelSpeeds encoder_target_speed = driven_wheel_speed;
+
+        // 4) The wheel PID compares those unchanged targets with the measured encoder-wheel
+        // speeds. Motor PWM is adjusted until the outer encoder speed follows the driven-wheel
+        // target numerically; there is no angular-velocity geometry correction in between.
         float pwm_R = speed_controller_R.update(
-            target_speed.speed_R_mm_s,
+            encoder_target_speed.speed_R_mm_s,
             odometry.state().wheel_speed.speed_R_mm_s,
             dt_s);
         float pwm_L = speed_controller_L.update(
-            target_speed.speed_L_mm_s,
+            encoder_target_speed.speed_L_mm_s,
             odometry.state().wheel_speed.speed_L_mm_s,
             dt_s);
 
         // 5) Detect a blocked wheel: high requested speed + high PWM + almost no encoder motion.
         const uint32_t elapsed_ms = std::max<uint32_t>(1, elapsed_us / 1000);
-        const bool stalled_R = wheelIsStalled(target_speed.speed_R_mm_s,
+        const bool stalled_R = wheelIsStalled(encoder_target_speed.speed_R_mm_s,
                                               odometry.state().wheel_speed.speed_R_mm_s,
                                               pwm_R,
                                               elapsed_ms,
                                               stall_time_R_ms);
-        const bool stalled_L = wheelIsStalled(target_speed.speed_L_mm_s,
+        const bool stalled_L = wheelIsStalled(encoder_target_speed.speed_L_mm_s,
                                               odometry.state().wheel_speed.speed_L_mm_s,
                                               pwm_L,
                                               elapsed_ms,
@@ -220,7 +237,7 @@ void navigationControlTask(void*) {
         // Control runs at 200 Hz; telemetry only needs 25 Hz internally.
         if (++telemetry_divider >= 8) {
             telemetry_divider = 0;
-            sendTelemetryToCommunicationTask(target_speed, pwm_R, pwm_L);
+            sendTelemetryToCommunicationTask(encoder_target_speed, pwm_R, pwm_L);
         }
     }
 }
