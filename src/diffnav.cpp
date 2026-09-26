@@ -87,7 +87,7 @@ void WheelSpeedController::reset(float pwm) {
     speed_integral_ = 0.0f;
     speed_derivative_ = 0.0f;
     previous_speed_error_ = 0.0f;
-    previous_pwm_ = pwm;
+    previous_PWM_ = static_cast<int>(pwm);
 }
 
 float WheelSpeedController::update(float target_speed_mm_s,
@@ -95,7 +95,7 @@ float WheelSpeedController::update(float target_speed_mm_s,
                                    float dt_s) {
     // The STM32 loop only updates when more than 100 us elapsed.
     if (dt_s <= 0.0001f) {
-        return previous_pwm_;
+        return static_cast<float>(previous_PWM_);
     }
 
     const float speed_error = target_speed_mm_s - measured_speed_mm_s;
@@ -126,25 +126,28 @@ float WheelSpeedController::update(float target_speed_mm_s,
     //
     // PWM = 0.2*old_PWM +
     //       0.8*(PWM_offset + Kp*error + Kd*derivative + Ki*integral)
-    float pwm =
-        config_.pwm_filter_previous * previous_pwm_ +
+    const float calculated_PWM =
+        config_.pwm_filter_previous * static_cast<float>(previous_PWM_) +
         config_.pwm_filter_new *
             (PWM_offset +
              config_.speed_kp * speed_error +
              config_.speed_kd * speed_derivative_ +
              config_.speed_ki * speed_integral_);
 
-    pwm = clamp(pwm, -config_.pwm_limit, config_.pwm_limit);
+    // PWM_R/PWM_L are int in the STM32 code. Keep the same truncation before
+    // saturation and before this value is reused by the next 0.2/0.8 filter step.
+    int PWM = static_cast<int>(calculated_PWM);
+    const int PWM_limit = static_cast<int>(config_.pwm_limit);
+    PWM = std::max(-PWM_limit, std::min(PWM, PWM_limit));
 
     // Same as: PWM = (target_speed == 0) ? 0 : PWM;
     if (target_speed_mm_s == 0.0f) {
-        pwm = 0.0f;
+        PWM = 0;
     }
 
     // Same STM32 anti-windup/rollback rule. This deliberately does NOT use
     // back-calculation, conditional integration, or a separate integral clamp.
-    const bool pwm_saturated =
-        pwm == config_.pwm_limit || pwm == -config_.pwm_limit;
+    const bool pwm_saturated = PWM == PWM_limit || PWM == -PWM_limit;
     const bool integral_term_too_large =
         std::fabs(speed_integral_ * config_.speed_ki) > config_.pwm_limit;
 
@@ -152,8 +155,8 @@ float WheelSpeedController::update(float target_speed_mm_s,
         speed_integral_ -= 2.0f * speed_error * dt_s;
     }
 
-    previous_pwm_ = pwm;
-    return pwm;
+    previous_PWM_ = PWM;
+    return static_cast<float>(PWM);
 }
 
 DifferentialOdometry::DifferentialOdometry(OdometryConfig config)

@@ -225,7 +225,7 @@ private:
     float speed_integral_ = 0.0f;
     float speed_derivative_ = 0.0f;
     float previous_speed_error_ = 0.0f;
-    float previous_pwm_ = 0.0f;
+    int previous_PWM_ = 0;
 };
 
 class DifferentialOdometry {
