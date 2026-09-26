@@ -19,8 +19,8 @@ MotorDriver motors;
 
 diffnav::DifferentialOdometry odometry(robot_config::odometryConfig());
 diffnav::Navigator navigator(robot_config::navigatorConfig());
-diffnav::WheelSpeedController speed_controller_R(robot_config::wheelControllerConfig());
-diffnav::WheelSpeedController speed_controller_L(robot_config::wheelControllerConfig());
+diffnav::WheelSpeedController speed_controller_R(robot_config::wheelControllerConfig_R());
+diffnav::WheelSpeedController speed_controller_L(robot_config::wheelControllerConfig_L());
 
 QueueHandle_t command_queue = nullptr;
 QueueHandle_t telemetry_queue = nullptr;
@@ -234,8 +234,11 @@ void navigationControlTask(void*) {
 
         motors.write(pwm_R, pwm_L);
 
-        // Control runs at 200 Hz; telemetry only needs 25 Hz internally.
-        if (++telemetry_divider >= 8) {
+        // The speed loop now runs at the same 1 kHz rate as the STM32 TIM7 loop.
+        // Keep telemetry at its configured slower period instead of publishing every PID tick.
+        constexpr uint32_t telemetry_divider_limit =
+            (robot_config::telemetry_period_ms * 1000U) / robot_config::control_period_us;
+        if (++telemetry_divider >= std::max<uint32_t>(1U, telemetry_divider_limit)) {
             telemetry_divider = 0;
             sendTelemetryToCommunicationTask(encoder_target_speed, pwm_R, pwm_L);
         }

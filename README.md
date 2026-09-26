@@ -64,6 +64,49 @@ target_encoder_speed_L = driven_wheel_speed_L
 
 The wheel PID therefore compares the driven-wheel target speed directly with the measured outer/dead-wheel encoder speed, exactly like `set_target_speeds()` in the STM32 implementation. Do not add an angular-velocity compensation term between these two values unless the control strategy is intentionally being changed.
 
+## STM32 speed PID behavior
+
+The ESP32 speed controller intentionally uses the same controller law as the current STM32 code. For each wheel:
+
+```text
+error = target_speed - current_speed
+
+speed_derivative =
+    0.999 * previous_speed_derivative
+  + 0.001 * (error - previous_error) / dt
+
+speed_integral += error * dt
+
+PWM_offset =
+    target_speed > 0
+      ? PWM_forward_min - 30
+      : PWM_backward_min + 30
+
+PWM =
+    0.2 * previous_PWM
+  + 0.8 * (
+        PWM_offset
+      + Kp * error
+      + Kd * speed_derivative
+      + Ki * speed_integral
+    )
+
+PWM = clamp(PWM, -PWM_max, PWM_max)
+PWM = (target_speed == 0) ? 0 : PWM
+```
+
+The same STM32 integral rollback rule is then applied when PWM saturates or when `abs(speed_integral * Ki) > PWM_max`.
+
+The gains also match the STM32 source: `Kp = 15`, `Kd = 0`, and `Ki = 200` for both wheels. The ESP32 keeps its own 10-bit hardware PWM range (`PWM_max = 1023`) and its measured motor-start thresholds (`±90`), because those values belong to the ESP32 hardware. The offset rule itself is unchanged: the controller starts 30 PWM counts inside the appropriate directional minimum.
+
+Measured encoder speed also uses the STM32 filter:
+
+```text
+current_speed = 0.7 * previous_filtered_speed + 0.3 * raw_speed
+```
+
+The controller runs at 1 kHz so the fixed per-sample derivative and PWM filter coefficients have the same timing basis as the STM32 TIM7 implementation.
+
 ## Architecture
 
 ```text
@@ -87,8 +130,8 @@ Communication never owns the motor-control loop. A disconnected ROS agent or a s
 - exact circular-arc differential-drive odometry;
 - independent right/left wheel speed controllers;
 - driven-wheel targets used directly as encoder-wheel PID targets, matching the STM32 convention;
-- static + velocity feed-forward;
-- PI(D), filtered derivative, anti-windup, and PWM slew limiting;
+- STM32-matched wheel speed PID formula and PWM_OFFSET behavior;
+- STM32-style filtered error derivative, integral rollback, and 0.2/0.8 PWM filtering;
 - distance-domain ramping and braking;
 - straight movement with phi correction and lane correction;
 - precise final-point capture;
@@ -98,7 +141,7 @@ Communication never owns the motor-control loop. A disconnected ROS agent or a s
 - go-to position with optional final phi;
 - direct velocity mode;
 - emergency break and wheel stall detection;
-- 200 Hz control task pinned to ESP32 core 1.
+- 1 kHz control task pinned to ESP32 core 1, matching the STM32 TIM7 speed-loop rate.
 
 ## Hardware defaults
 

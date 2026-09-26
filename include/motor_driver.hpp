@@ -16,7 +16,9 @@ private:
                     int backward_pin,
                     int enable_pin,
                     int pwm_channel,
-                    float pwm);
+                    float pwm,
+                    int PWM_forward_min,
+                    int PWM_backward_min);
 
     // Arduino-ESP32 2.x and 3.x expose slightly different LEDC APIs. The implementation
     // hides that difference from the rest of the project.

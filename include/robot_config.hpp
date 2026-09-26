@@ -32,8 +32,26 @@ constexpr int motor_R_pwm_channel = 8;
 constexpr int motor_L_pwm_channel = 9;
 constexpr uint32_t motor_pwm_frequency_hz = 20000;
 constexpr uint8_t motor_pwm_resolution_bits = 10;
-constexpr int pwm_max = 1023;
-constexpr int pwm_deadzone = 90;
+
+// Keep the ESP32/PAMI PWM range and calibrated motor-start thresholds.
+// The PID formula below is the STM32 formula, but these hardware limits belong
+// to this ESP32 motor driver and must stay in its native 10-bit PWM scale.
+constexpr int PWM_max = 1023;
+constexpr int PWM_R_forward_min = 90;
+constexpr int PWM_L_forward_min = 90;
+constexpr int PWM_R_backward_min = -90;
+constexpr int PWM_L_backward_min = -90;
+
+// Same offset distance used by the STM32 set_target_speeds() implementation.
+constexpr int PWM_offset_margin = 30;
+
+// STM32 speed PID gains.
+constexpr float kpS_R = 15.0f;
+constexpr float kdS_R = 0.0f;
+constexpr float kiS_R = 200.0f;
+constexpr float kpS_L = 15.0f;
+constexpr float kdS_L = 0.0f;
+constexpr float kiS_L = 200.0f;
 
 // -----------------------------------------------------------------------------
 // Encoder pins
@@ -63,7 +81,10 @@ constexpr float wheel_spacing_mm = 110.37343379225145f;
 // -----------------------------------------------------------------------------
 // Real-time control
 // -----------------------------------------------------------------------------
-constexpr uint32_t control_period_us = 5000;              // 200 Hz
+// TIM7 in the STM32 project runs the speed loop at 1 kHz. Keep the ESP32
+// controller at the same update rate because the STM derivative/PWM filters
+// use fixed per-sample coefficients.
+constexpr uint32_t control_period_us = 1000;              // 1 kHz
 constexpr uint32_t control_timing_fault_threshold_us = 30000;
 constexpr uint8_t control_timing_fault_cycles = 5;
 constexpr uint32_t telemetry_period_ms = 40;
@@ -106,10 +127,27 @@ inline diffnav::NavigatorConfig navigatorConfig() {
     return config;
 }
 
-inline diffnav::WheelControllerConfig wheelControllerConfig() {
+inline diffnav::WheelControllerConfig wheelControllerConfig_R() {
     diffnav::WheelControllerConfig config;
-    config.pwm_limit = pwm_max;
-    config.static_feedforward_pwm = pwm_deadzone;
+    config.speed_kp = kpS_R;
+    config.speed_kd = kdS_R;
+    config.speed_ki = kiS_R;
+    config.pwm_limit = PWM_max;
+    config.pwm_forward_min = PWM_R_forward_min;
+    config.pwm_backward_min = PWM_R_backward_min;
+    config.pwm_offset_margin = PWM_offset_margin;
+    return config;
+}
+
+inline diffnav::WheelControllerConfig wheelControllerConfig_L() {
+    diffnav::WheelControllerConfig config;
+    config.speed_kp = kpS_L;
+    config.speed_kd = kdS_L;
+    config.speed_ki = kiS_L;
+    config.pwm_limit = PWM_max;
+    config.pwm_forward_min = PWM_L_forward_min;
+    config.pwm_backward_min = PWM_L_backward_min;
+    config.pwm_offset_margin = PWM_offset_margin;
     return config;
 }
 
