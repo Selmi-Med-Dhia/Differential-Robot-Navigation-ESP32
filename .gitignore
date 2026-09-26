@@ -1,4 +1,5 @@
 .pio/
-.vscode/
+.vscode/*
+!.vscode/c_cpp_properties.json
 *.o
 .DS_Store

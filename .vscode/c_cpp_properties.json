@@ -1,0 +1,43 @@
+{
+    "configurations": [
+        {
+            "name": "PlatformIO",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/.pio/libdeps/esp32dev/micro_ros_platformio/**",
+                "${env:USERPROFILE}/.platformio/packages/framework-arduinoespressif32/cores/esp32",
+                "${env:USERPROFILE}/.platformio/packages/framework-arduinoespressif32/variants/esp32",
+                "${env:USERPROFILE}/.platformio/packages/framework-arduinoespressif32/libraries/**",
+                "${env:USERPROFILE}/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/**",
+                "${env:USERPROFILE}/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/qio_qspi/include",
+                "${env:USERPROFILE}/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include",
+                "${env:USERPROFILE}/.platformio/packages/toolchain-xtensa-esp32/lib/gcc/xtensa-esp32-elf/8.4.0/include",
+                "${env:USERPROFILE}/.platformio/packages/toolchain-xtensa-esp32/lib/gcc/xtensa-esp32-elf/8.4.0/include-fixed"
+            ],
+            "defines": [
+                "PLATFORMIO=60118",
+                "ARDUINO=10812",
+                "ARDUINO_ARCH_ESP32",
+                "ESP32",
+                "F_CPU=240000000L",
+                "ARDUINO_ESP32_DEV",
+                "CORE_DEBUG_LEVEL=0"
+            ],
+            "compilerPath": "${env:USERPROFILE}/.platformio/packages/toolchain-xtensa-esp32/bin/xtensa-esp32-elf-gcc.exe",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "gcc-x64",
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/include",
+                    "${workspaceFolder}/src",
+                    "${env:USERPROFILE}/.platformio/packages/framework-arduinoespressif32",
+                    "${env:USERPROFILE}/.platformio/packages/toolchain-xtensa-esp32"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}
